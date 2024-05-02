@@ -1,0 +1,9 @@
+nltk
+numpy
+openai
+torch
+tqdm
+transformers
+scikit-learn
+mauve-text
+rouge_score

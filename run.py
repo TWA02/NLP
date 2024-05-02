@@ -72,7 +72,7 @@ class LLM:
                     {'role': 'user', 'content': prompt}
                 ]
             if args.azure:
-                deploy_name = args.model
+                deploy_name = "nlp"
 
             if use_chat_api:
                 is_ok = False
@@ -118,10 +118,10 @@ class LLM:
                     except Exception as error:
                         if retry_count <= 5:
                             logger.warning(f"OpenAI API retry for {retry_count} times ({error})")
-                            if "triggering Azure OpenAI’s content management policy" in str(error):
+                            if "content management policy" in str(error):
                                 # filtered by Azure 
                                 self.azure_filter_fail += 1
-                                return ""
+                                return "this failed lol"
                             continue
                         print(error)
                         import pdb; pdb.set_trace()
