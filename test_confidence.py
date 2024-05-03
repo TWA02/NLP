@@ -3,8 +3,9 @@ import logging
 import os
 import json
 import argparse
+import numpy as np
+import pandas as pd
 from argparse import Namespace
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,7 +35,7 @@ class AzureModelConfidenceTester:
 
         try:
             response = openai.ChatCompletion.create(
-                    engine="nlp",  # Ensure this is the correct Azure engine ID
+                    engine="nlp",
                     model="gpt-35-turbo",
                     messages=[{'role': 'system', 'content': "You are a helpful assistant."},
                             {'role': 'user', 'content': prompt}],
@@ -50,64 +51,45 @@ class AzureModelConfidenceTester:
             logger.error(f"Failed to query the model: {e}")
             return None
 
-def process_data(data):
-    
-    confidences = []
+def process_data(data, output_file):
+    results = []
 
     for entry in data:
         question = entry["question"]
-        answers = ', '.join([ans for sublist in entry["answers"] for ans in sublist])
+        answers = ', '.join([ans for sublist in entry["answer"] for ans in sublist])
         docs = "; ".join([f"Document {doc['id']} Title: {doc['title']} Text: {doc['text']}" for doc in entry["docs"]])
         combined_text = f"Question: {question} Answers: {answers} {docs}"
 
         args = Namespace(openai_api=True, azure=True, model='gpt-3.5-turbo-0301', text=combined_text)
         tester = AzureModelConfidenceTester(args)
         confidence = tester.query_confidence(combined_text)
-        if confidence:
-            try:
-                # Attempt to convert the confidence response to a float
-                conf_value = float(confidence)
-                print(f"Model Confidence for entry ID {entry['id']}: {confidence}")
-                confidences.append(conf_value)
-                entry["confidence_score"] = conf_value
-            except ValueError:
-                # Handle the case where conversion fails
-                print(f"Received non-numeric confidence response for entry ID {entry['id']}: {confidence}")
-                confidences.append(None)
-                entry["confidence_score"] = None
-        else:
-            print(f"Failed to obtain confidence for entry ID {entry['id']}.")
-            confidences.append(None)
-        
-    # Save the updated data with confidence scores to a new JSON file
+
+        entry.update({
+            "confidence_score": float(confidence) if confidence and confidence.isdigit() else None,
+        })
+        results.append(entry)
+
+    # Save the updated data with confidence and F1 scores to a new JSON file
     with open(output_file, 'w') as f:
         json.dump(data, f, indent=4)
 
-    # Calculate average confidence, ignoring None values
-    valid_confidences = [conf for conf in confidences if conf is not None]
-    if valid_confidences:
-        average_confidence = sum(valid_confidences) / len(valid_confidences)
-        print(f"Average Confidence: {average_confidence}")
-    else:
-        print("No valid confidence scores available to calculate an average.")
-
+    # Prepare data for correlation analysis
+    df = pd.DataFrame.from_records(results, columns=['confidence_score'])
+    
 
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser(description='Process JSON data and query model confidence on Azure.')
     parser.add_argument('--file', type=str, required=True, help='File path of the JSON data file.')
-    parser.add_argument('--output', type=str, required=True, help='Output file path to save the JSON data with confidence scores.')
+    parser.add_argument('--output', type=str, required=True, help='Output file path to save the JSON data with confidence and F1 scores.')
 
     args = parser.parse_args()
 
-    # Load the data from the JSON file
     if not os.path.exists(args.file):
         logger.error("File does not exist")
     else:
         with open(args.file, 'r') as file:
             data = json.load(file)
             if "data" in data:
-                process_data(data['data'])
+                process_data(data['data'], args.output)
             else:
                 logger.error("JSON does not contain 'data' key")
-    
