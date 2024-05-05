@@ -97,7 +97,7 @@ class LLM:
                         print(error)
                         import pdb; pdb.set_trace()
                 self.prompt_tokens += response['usage']['prompt_tokens']
-                self.completion_tokens += response['usage']['completion_tokens']
+                self.completion_tokens += response['usage'].get('completion_tokens', 0)
                 return response['choices'][0]['message']['content']
             else:
                 is_ok = False
@@ -126,7 +126,7 @@ class LLM:
                         print(error)
                         import pdb; pdb.set_trace()
                 self.prompt_tokens += response['usage']['prompt_tokens']
-                self.completion_tokens += response['usage']['completion_tokens']
+                self.completion_tokens += response['usage'].get('completion_tokens', 0)
                 return response['choices'][0]['text']
         else:
             inputs = self.tokenizer([prompt], return_tensors="pt").to(self.model.device)

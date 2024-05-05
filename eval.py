@@ -429,6 +429,96 @@ def compute_autoais(data,
     }
 
 
+def compute_autoais_individuals(data,
+                    decontext=False,
+                    concat=False,
+                    qampari=False,
+                    at_most_citations=None,):
+    """
+    Compute AutoAIS score individually.
+
+    Args:
+        data: requires field `output` and `docs`
+              - docs should be a list of items with fields `title` and `text` (or `phrase` and `sent` for QA-extracted docs)
+        citation: check citations and use the corresponding references.
+        decontext: decontextualize the output
+    """
+
+    global autoais_model, autoais_tokenizer
+    if autoais_model is None:
+        logger.info("Loading AutoAIS model...")
+        autoais_model = AutoModelForSeq2SeqLM.from_pretrained(AUTOAIS_MODEL, torch_dtype=torch.bfloat16, max_memory=get_max_memory(), device_map="auto")
+        autoais_tokenizer = AutoTokenizer.from_pretrained(AUTOAIS_MODEL, use_fast=False)
+
+    logger.info(f"Running AutoAIS...")
+
+    def _format_document(doc):
+        """Format document for AutoAIS."""
+
+        if "sent" in doc:
+            # QA-extracted docs
+            return "Title: %s\n%s" % (doc['title'], doc['sent'])
+        else:
+            return "Title: %s\n%s" % (doc['title'], doc['text'])
+
+    results = []
+
+    for item in tqdm(data):
+        # Get sentences by using NLTK
+        if qampari:
+            sents = [item['question'] + " " + x.strip() for x in item['output'].rstrip().rstrip(".").rstrip(",").split(",")]
+        else:
+            sents = sent_tokenize(item['output'])
+        if len(sents) == 0:
+            continue
+
+        target_sents = [remove_citations(sent).strip() for sent in sents]
+
+        item_result = {
+            "ais_scores": [],
+            "ais_precisions": [],
+        }
+
+
+
+        entail_scores = []
+        precision_scores = []
+        total_citations = 0
+
+        for sent_id, sent in enumerate(sents):
+            target_sent = target_sents[sent_id]  # Citation removed and (if opted for) decontextualized
+            ref = [int(r[1:])-1 for r in re.findall(r"\[\d+", sent)]  # In-text citation id starts from 1
+
+            if any([ref_id >= len(item['docs']) for ref_id in ref]) or len(ref) == 0:
+                joint_entail = 0
+            else:
+                if at_most_citations is not None:
+                    ref = ref[:at_most_citations]
+                total_citations += len(ref)
+                joint_passage = '\n'.join([_format_document(item['docs'][psgs_id]) for psgs_id in ref])
+                joint_entail = _run_nli_autoais(joint_passage, target_sent)
+
+            entail_scores.append(joint_entail)
+            if total_citations > 0:
+                precision_scores.append(joint_entail / len(ref))
+
+        # Calculate mean scores for the item
+        if entail_scores:
+            item_result['ais_score'] = np.mean(entail_scores)
+        if precision_scores:
+            item_result['ais_precision'] = np.mean(precision_scores)
+
+        results.append(item_result)
+
+    return results
+
+
+
+
+
+
+
+
 def compute_qampari_f1(data, cot=False):
     prec = []
     rec = []
@@ -509,6 +599,10 @@ def main():
         data[i]['output'] = data[i]['output'].replace("<|im_end|>", "")
 
 
+    # Normalize data
+    for i in tqdm(range(len(data)), desc="Normalizing data"):
+        data[i]['output'] = data[i]['output'].strip().split("\n")[0]
+
     # Remove all citations for all non-AutoAIS evaluation
     normalized_data = copy.deepcopy(data)
     for i in range(len(normalized_data)):
@@ -525,7 +619,7 @@ def main():
         result.update(compute_qa(normalized_data))
     if args.mauve:
         result['mauve'] = compute_mauve(normalized_data)
-    if args.citations: 
+    if args.citations:
         result.update(compute_autoais(data, qampari=qampari, at_most_citations=args.at_most_citations))
     if args.claims_nli:
         result["claims_nli"] = compute_claims(normalized_data)
@@ -534,9 +628,5 @@ def main():
     with open(args.f + ".score", "w") as f:
         json.dump(result, f, indent=4)
 
-
 if __name__ == "__main__":
     main()
-
-
-

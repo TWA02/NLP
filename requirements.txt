@@ -1,5 +1,6 @@
 nltk
 numpy
+pandas
 openai==0.28
 torch
 tqdm
@@ -7,3 +8,6 @@ transformers
 scikit-learn
 mauve-text
 rouge_score
+accelerate
+matplotlib
+sentencepiece

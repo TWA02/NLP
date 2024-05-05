@@ -56,7 +56,7 @@ def process_data(data, output_file):
 
     for entry in data:
         question = entry["question"]
-        answers = ', '.join([ans for sublist in entry["answer"] for ans in sublist])
+        answers = ''.join([ans for sublist in entry["answer"] for ans in sublist])
         docs = "; ".join([f"Document {doc['id']} Title: {doc['title']} Text: {doc['text']}" for doc in entry["docs"]])
         combined_text = f"Question: {question} Answers: {answers} {docs}"
 
