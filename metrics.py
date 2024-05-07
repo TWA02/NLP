@@ -56,54 +56,52 @@ class Metrics:
         if not self.data:
             raise ValueError("Data not loaded or metrics not calculated. Please load data and calculate metrics first.")
 
-        df = pd.DataFrame(self.data)
+        # Prepare the dataframe, filtering out unnecessary data
+        df = pd.DataFrame(self.data).dropna(subset=['f1_score', 'rouge_score', 'correctness', 'average_relevance_score', 'relevance', 'accuracy'])
         df_non_zero_f1 = df[df['f1_score'] > 0]  # Filter out entries with F1 score of 0
 
-        # Define colors for the plots
-        color_palette = sns.color_palette("husl", 5)
+        # Check if there's any data left after filtering
+        if df_non_zero_f1.empty:
+            print("No valid data available for plotting.")
+            return
 
-        # Function to plot regression line and calculate R^2
-        def plot_regression(x, y, data, ax):
-            model = LinearRegression().fit(data[[x]], data[y])
-            predictions = model.predict(data[[x]])
-            ax.plot(data[x], predictions, color='red', label=f'R² = {r2_score(data[y], predictions):.2f}')
-            ax.legend()
+        # Generate and save each plot
+        self.create_plot('rouge_score', 'correctness', df_non_zero_f1, 'Rouge Score vs Correctness Score', 'Rouge Score', 'Correctness Confidence', 'rouge_correct.png')
+        self.create_plot('average_relevance_score', 'relevance', df_non_zero_f1, 'Average Relevance Score vs Relevance', 'Average Given Relevance Score', 'Relevance Confidence', 'relevance.png')
+        self.create_plot('f1_score', 'accuracy', df_non_zero_f1, 'Accuracy vs F1 Score', 'Accuracy', 'F1 Score', 'f1_accuracy.png')
 
-        # Rouge Score vs Correctness Score
+
+    # Define a function to plot regression line and calculate R^2
+    def plot_regression(self, x, y, data, ax):
+        if data.empty or len(data[x].dropna()) == 0 or len(data[y].dropna()) == 0:
+            print("Data for regression is empty or NaN.")
+            return  # Exit if there is no data to plot
+
+        # Prepare data: remove any NaN values that may interfere with regression calculation
+        data = data.dropna(subset=[x, y])
+        
+        model = LinearRegression()
+        X = data[[x]]  # Feature matrix
+        y_true = data[y]  # Target vector
+        model.fit(X, y_true)
+        predictions = model.predict(X)
+        
+        # Plotting the regression line
+        ax.plot(data[x], predictions, color='red', label=f'R² = {r2_score(y_true, predictions):.2f}')
+        ax.legend()
+
+    def create_plot(self, x, y, data, title, xlabel, ylabel, filename):
         fig, ax = plt.subplots(figsize=(12, 6))
-        sns.scatterplot(x='rouge_score', y='correctness', data=df_non_zero_f1, ax=ax, palette=color_palette)
-        plot_regression('rouge_score', 'correctness', df_non_zero_f1, ax)
-        ax.set_title('Rouge Score vs Correctness Score')
-        ax.set_xlabel('Rouge Score')
-        ax.set_ylabel('Correctness Confidence')
-        ax.set_xlim(left=0)
-        ax.set_ylim(bottom=0)
-        plt.savefig(os.path.join(self.output_dir, 'rouge_correct.png'))
+        sns.scatterplot(x=x, y=y, data=data, ax=ax)
+        self.plot_regression(x, y, data, ax)  # This calls the regression line plotting
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        # ax.set_xlim(left=0)  # Comment out or remove this line
+        # ax.set_ylim(bottom=0)  # Comment out or remove this line
+        plt.savefig(os.path.join(self.output_dir, filename))
         plt.show()
 
-        # Average Relevance Score vs Relevance
-        fig, ax = plt.subplots(figsize=(12, 6))
-        sns.scatterplot(x='average_relevance_score', y='relevance', data=df_non_zero_f1, ax=ax, palette=color_palette)
-        plot_regression('average_relevance_score', 'relevance', df_non_zero_f1, ax)
-        ax.set_title('Average Relevance Score vs Relevance Confidence')
-        ax.set_xlabel('Average Given Relevance Score')
-        ax.set_ylabel('Relevance Confidence')
-        ax.set_xlim(left=0)
-        ax.set_ylim(bottom=0)
-        plt.savefig(os.path.join(self.output_dir, 'relevance.png'))
-        plt.show()
-
-        # Accuracy vs F1 Score
-        fig, ax = plt.subplots(figsize=(12, 6))
-        sns.scatterplot(x='f1_score', y='accuracy', data=df_non_zero_f1, ax=ax, palette=color_palette)
-        plot_regression('f1_score', 'accuracy', df_non_zero_f1, ax)
-        ax.set_title('Accuracy vs F1 Score')
-        ax.set_xlabel('Accuracy')
-        ax.set_ylabel('F1 Score')
-        ax.set_xlim(left=0)
-        ax.set_ylim(bottom=0)
-        plt.savefig(os.path.join(self.output_dir, 'f1_accuracy.png'))
-        plt.show()
 
 
 def main():
