@@ -165,7 +165,7 @@ def main():
     # - demos: a list of demo examples, each of which should have
     #     - question: the question
     #     - docs: the documents ("title" and "text")
-    #     - answer: the answer to show in the demo. If it is a list, they will be concatenated by "\n". This is useful when the answer includes interactive components.
+    #     - answer: the answer to show in the demo. If it is a list, they will beA concatenated by "\n". This is useful when the answer includes interactive components.
     # Note that this python file will sample `--shot` demos from the prompt file given the random seed `--seed`
     parser.add_argument("--prompt_file", type=str, help="Path to the prompt file")
 
