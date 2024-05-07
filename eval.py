@@ -690,6 +690,15 @@ def main():
     parser.add_argument("--claims_nli", action="store_true", help="Use claims for ELI5")
     args = parser.parse_args()
 
+    if "qampari" in args.f:
+        args.no_rouge = True
+        args.qa = False
+        args.mauve = False
+        args.decontext = False
+        qampari = True
+    else:
+        qampari = False
+
     # Load data from the specified file
     with open(args.f, 'r') as file:
         data = json.load(file)['data']
@@ -698,6 +707,15 @@ def main():
     for item in tqdm(data, desc="Processing data"):
         item['output'] = item['output'].strip().split("\n")[0].replace("", "")
 
+    # Remove all citations for all non-AutoAIS evaluation
+    normalized_data = copy.deepcopy(data)
+    for i in range(len(normalized_data)):
+        normalized_data[i]['output'] = remove_citations(normalized_data[i]['output'])
+
+
+    result = {}
+    result['length'] = compute_len(normalized_data)
+    result['str_em'], result['str_hit'] = compute_str_em(normalized_data)
 
     if not args.no_rouge:
         logger.info("Evaluating ROUGE scores...")
@@ -708,21 +726,28 @@ def main():
         for idx, score in enumerate(rouge_results['individual_scores']):
             data[idx]['rouge_score'] = score
 
-
     if args.citations:
-        logger.info("Evaluating with AutoAIS...")
-        autoais_results = compute_autoais_individuals(data, qampari="qampari" in args.f, at_most_citations=args.at_most_citations)
-        for idx, result in enumerate(autoais_results):
-            data[idx].update(result)
+        result.update(compute_autoais(data, qampari=qampari, at_most_citations=args.at_most_citations))
+    
+    print(result)
+    with open(args.f + ".score", "w") as f:
+        json.dump(result, f, indent=4)
 
-    import os
 
-    # Write the modified data back to the file or to a new file
-    base_filename, file_extension = os.path.splitext(args.f)
-    output_filename = base_filename + "_enhanced.json"
-    with open(output_filename, 'w') as outfile:
-        json.dump(data, outfile, indent=4)
-    logger.info(f"Results written to {output_filename}")
+    # if args.citations:
+    #     logger.info("Evaluating with AutoAIS...")
+    #     autoais_results = compute_autoais_individuals(data, qampari="qampari" in args.f, at_most_citations=args.at_most_citations)
+    #     for idx, result in enumerate(autoais_results):
+    #         data[idx].update(result)
+
+    # import os
+
+    # # Write the modified data back to the file or to a new file
+    # base_filename, file_extension = os.path.splitext(args.f)
+    # output_filename = base_filename + "_enhanced.json"
+    # with open(output_filename, 'w') as outfile:
+    #     json.dump(data, outfile, indent=4)
+    # logger.info(f"Results written to {output_filename}")
     # args = parser.parse_args()
 
     # if "qampari" in args.f:
