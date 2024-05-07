@@ -4,6 +4,9 @@ import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import r2_score
+import numpy as np
 
 class Metrics:
     def __init__(self, input_json_path):
@@ -56,31 +59,51 @@ class Metrics:
         df = pd.DataFrame(self.data)
         df_non_zero_f1 = df[df['f1_score'] > 0]  # Filter out entries with F1 score of 0
 
-        plt.figure(figsize=(12, 6))
-        sns.scatterplot(x='rouge_score', y='correctness', data=df_non_zero_f1)
-        plt.title('Rouge Score vs Correctness Score')
-        plt.xlabel('Rouge Score')
-        plt.ylabel('Correctness Confidence')
+        # Define colors for the plots
+        color_palette = sns.color_palette("husl", 5)
+
+        # Function to plot regression line and calculate R^2
+        def plot_regression(x, y, data, ax):
+            model = LinearRegression().fit(data[[x]], data[y])
+            predictions = model.predict(data[[x]])
+            ax.plot(data[x], predictions, color='red', label=f'R² = {r2_score(data[y], predictions):.2f}')
+            ax.legend()
+
+        # Rouge Score vs Correctness Score
+        fig, ax = plt.subplots(figsize=(12, 6))
+        sns.scatterplot(x='rouge_score', y='correctness', data=df_non_zero_f1, ax=ax, palette=color_palette)
+        plot_regression('rouge_score', 'correctness', df_non_zero_f1, ax)
+        ax.set_title('Rouge Score vs Correctness Score')
+        ax.set_xlabel('Rouge Score')
+        ax.set_ylabel('Correctness Confidence')
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0)
         plt.savefig(os.path.join(self.output_dir, 'rouge_correct.png'))
         plt.show()
 
-
-        plt.figure(figsize=(12, 6))
-        sns.scatterplot(x='average_relevance_score', y='relevance', data=df_non_zero_f1)
-        plt.title('Average Relevance Score vs Relevance')
-        plt.xlabel('Average Given Relevance Score')
-        plt.ylabel('Relevance Confidence')
+        # Average Relevance Score vs Relevance
+        fig, ax = plt.subplots(figsize=(12, 6))
+        sns.scatterplot(x='average_relevance_score', y='relevance', data=df_non_zero_f1, ax=ax, palette=color_palette)
+        plot_regression('average_relevance_score', 'relevance', df_non_zero_f1, ax)
+        ax.set_title('Average Relevance Score vs Relevance Confidence')
+        ax.set_xlabel('Average Given Relevance Score')
+        ax.set_ylabel('Relevance Confidence')
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0)
         plt.savefig(os.path.join(self.output_dir, 'relevance.png'))
         plt.show()
 
-        plt.figure(figsize=(12, 6))
-        sns.scatterplot(x='f1_score', y='accuracy', data=df_non_zero_f1)
-        plt.title('Accuracy vs F1 Score')
-        plt.xlabel('Accuracy')
-        plt.ylabel('F1 Score')
+        # Accuracy vs F1 Score
+        fig, ax = plt.subplots(figsize=(12, 6))
+        sns.scatterplot(x='f1_score', y='accuracy', data=df_non_zero_f1, ax=ax, palette=color_palette)
+        plot_regression('f1_score', 'accuracy', df_non_zero_f1, ax)
+        ax.set_title('Accuracy vs F1 Score')
+        ax.set_xlabel('Accuracy')
+        ax.set_ylabel('F1 Score')
+        ax.set_xlim(left=0)
+        ax.set_ylim(bottom=0)
         plt.savefig(os.path.join(self.output_dir, 'f1_accuracy.png'))
         plt.show()
-
 
 
 def main():
