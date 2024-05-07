@@ -155,6 +155,60 @@ def compute_rouge(data):
     return scores['rougeLsum']
 
 
+
+def compute_individual_rouge(data):
+    """Compute individual and average ROUGE scores for each instance.
+    Args:
+        data: A list of dictionaries with fields `output` and either `answer` or `annotations` containing reference texts.
+    Returns:
+        A dictionary with average scores and a list of individual scores.
+    """
+    def _rouge_calculation(hypotheses, references1, references2=[], metrics=['rougeLsum']):
+        # Ensure that references2 has content, or duplicate references1
+        if references2 == []:
+            references2 = references1
+
+        # Initialize ROUGE scorer and score aggregator
+        scorer = rouge_scorer.RougeScorer(metrics, use_stemmer=True)
+        aggregator = scoring.BootstrapAggregator()
+        individual_scores = []
+
+        # Calculate scores for each hypothesis against both sets of references
+        for i in range(len(hypotheses)):
+            scores1 = scorer.score(references1[i], hypotheses[i])
+            scores2 = scorer.score(references2[i], hypotheses[i])
+            # Choose the better score
+            better_scores = scores1 if scores1['rougeLsum'].fmeasure > scores2['rougeLsum'].fmeasure else scores2
+            aggregator.add_scores(better_scores)
+            individual_scores.append(better_scores['rougeLsum'].fmeasure)
+
+        # Calculate average scores
+        average_scores = {m: 100 * aggregator.aggregate()[m].mid.fmeasure for m in metrics}
+
+        return average_scores, individual_scores
+
+    # Process input data
+    hypotheses = [item["output"] for item in data]
+    references1 = [item["annotations"][0]["long_answer"] if "annotations" in item else item["answer"] for item in data]
+    references2 = [item["annotations"][1]["long_answer"] if "annotations" in item and len(item["annotations"]) > 1 else item["answer"] for item in data]
+
+    # Tokenize and preprocess texts
+    hypotheses = ['\n'.join(sent_tokenize(text.lower())) for text in hypotheses]
+    references1 = ['\n'.join(sent_tokenize(text.lower())) for text in references1]
+    references2 = ['\n'.join(sent_tokenize(text.lower())) for text in references2]
+
+    # Calculate scores
+    average_scores, individual_scores = _rouge_calculation(hypotheses, references1, references2)
+
+    # Return a dictionary with both average and individual scores
+    return {'average_scores': average_scores, 'individual_scores': individual_scores}
+
+
+
+
+
+
+
 def compute_str_em(data):
     """Compute STR-EM metric (only for ASQA)
     Args:
@@ -429,92 +483,138 @@ def compute_autoais(data,
     }
 
 
-def compute_autoais_individuals(data,
-                    decontext=False,
-                    concat=False,
-                    qampari=False,
-                    at_most_citations=None,):
-    """
-    Compute AutoAIS score individually.
 
-    Args:
-        data: requires field `output` and `docs`
-              - docs should be a list of items with fields `title` and `text` (or `phrase` and `sent` for QA-extracted docs)
-        citation: check citations and use the corresponding references.
-        decontext: decontextualize the output
-    """
+# def compute_autoais_individuals(data, decontext=False, concat=False, qampari=False, at_most_citations=None):
+#     global autoais_model, autoais_tokenizer
+#     if autoais_model is None:
+#         logger.info("Loading AutoAIS model...")
+#         autoais_model = AutoModelForSeq2SeqLM.from_pretrained(AUTOAIS_MODEL, torch_dtype=torch.bfloat16, max_memory=get_max_memory(), device_map="auto")
+#         autoais_tokenizer = AutoTokenizer.from_pretrained(AUTOAIS_MODEL, use_fast=False)
 
+#     logging.info("Running AutoAIS...")
+
+#     def _format_document(doc):
+#         if "sent" in doc:
+#             return f"Title: {doc['title']}\n{doc['sent']}"
+#         else:
+#             return f"Title: {doc['title']}\n{doc['text']}"
+
+#     def remove_citations(sent):
+#         # Placeholder to remove citation markers like [1], [2] etc.
+#         return re.sub(r'\[\d+\]', '', sent)
+
+#     for item in tqdm(data):
+#         if qampari:
+#             sents = [item['question'] + " " + x.strip() for x in item['output'].rstrip().rstrip(".").rstrip(",").split(",")]
+#         else:
+#             sents = sent_tokenize(item['output'])
+
+#         if len(sents) == 0:
+#             continue
+
+#         target_sents = [remove_citations(sent).strip() for sent in sents]
+
+#         item['autoais_scores'] = {'sentences': [], 'recall': [], 'precision': []}
+#         total_citations = 0
+#         valid_citations = 0
+
+#         for sent_id, sent in enumerate(sents):
+#             target_sent = target_sents[sent_id]
+#             refs = [int(r[1:])-1 for r in re.findall(r"\[\d+", sent)]
+#             if len(refs) == 0 or any([ref_id >= len(item['docs']) for ref_id in refs]):
+#                 continue
+
+#             if at_most_citations is not None:
+#                 refs = refs[:at_most_citations]
+
+#             joint_passage = '\n'.join([_format_document(item['docs'][ref_id]) for ref_id in refs])
+#             joint_entail = _run_nli_autoais(joint_passage, target_sent)
+
+#             if joint_entail:
+#                 valid_citations += len(refs)
+
+#             total_citations += len(refs)
+#             item['autoais_scores']['sentences'].append({
+#                 'sentence': sent,
+#                 'entailment': joint_entail,
+#                 'citations': refs
+#             })
+
+#         num_sentences = len(sents)
+#         item['autoais_scores']['recall'] = valid_citations / num_sentences if num_sentences > 0 else 0
+#         item['autoais_scores']['precision'] = valid_citations / total_citations if total_citations > 0 else 0
+
+#     return data
+
+
+
+
+def compute_autoais_individuals(data, decontext=False, concat=False, qampari=False, at_most_citations=None):
     global autoais_model, autoais_tokenizer
     if autoais_model is None:
         logger.info("Loading AutoAIS model...")
         autoais_model = AutoModelForSeq2SeqLM.from_pretrained(AUTOAIS_MODEL, torch_dtype=torch.bfloat16, max_memory=get_max_memory(), device_map="auto")
         autoais_tokenizer = AutoTokenizer.from_pretrained(AUTOAIS_MODEL, use_fast=False)
 
-    logger.info(f"Running AutoAIS...")
+    logging.info("Running AutoAIS...")
 
     def _format_document(doc):
-        """Format document for AutoAIS."""
-
         if "sent" in doc:
-            # QA-extracted docs
-            return "Title: %s\n%s" % (doc['title'], doc['sent'])
+            return f"Title: {doc['title']}\n{doc['sent']}"
         else:
-            return "Title: %s\n%s" % (doc['title'], doc['text'])
+            return f"Title: {doc['title']}\n{doc['text']}"
+
+    def remove_citations(sent):
+        # Placeholder to remove citation markers like [1], [2] etc.
+        return re.sub(r'\[\d+\]', '', sent)
 
     results = []
-
     for item in tqdm(data):
-        # Get sentences by using NLTK
         if qampari:
             sents = [item['question'] + " " + x.strip() for x in item['output'].rstrip().rstrip(".").rstrip(",").split(",")]
         else:
             sents = sent_tokenize(item['output'])
+
         if len(sents) == 0:
             continue
 
         target_sents = [remove_citations(sent).strip() for sent in sents]
 
-        item_result = {
-            "ais_scores": [],
-            "ais_precisions": [],
-        }
-
-
-
-        entail_scores = []
-        precision_scores = []
+        total_valid_citations = 0
         total_citations = 0
+        recall = 0
+        precision = 0
 
         for sent_id, sent in enumerate(sents):
-            target_sent = target_sents[sent_id]  # Citation removed and (if opted for) decontextualized
-            ref = [int(r[1:])-1 for r in re.findall(r"\[\d+", sent)]  # In-text citation id starts from 1
+            target_sent = target_sents[sent_id]
+            refs = [int(r[1:])-1 for r in re.findall(r"\[\d+", sent)]
+            if len(refs) == 0 or any([ref_id >= len(item['docs']) for ref_id in refs]):
+                continue
 
-            if any([ref_id >= len(item['docs']) for ref_id in ref]) or len(ref) == 0:
-                joint_entail = 0
-            else:
-                if at_most_citations is not None:
-                    ref = ref[:at_most_citations]
-                total_citations += len(ref)
-                joint_passage = '\n'.join([_format_document(item['docs'][psgs_id]) for psgs_id in ref])
-                joint_entail = _run_nli_autoais(joint_passage, target_sent)
+            if at_most_citations is not None:
+                refs = refs[:at_most_citations]
 
-            entail_scores.append(joint_entail)
-            if total_citations > 0:
-                precision_scores.append(joint_entail / len(ref))
+            joint_passage = '\n'.join([_format_document(item['docs'][ref_id]) for ref_id in refs])
+            joint_entail = _run_nli_autoais(joint_passage, target_sent)
 
-        # Calculate mean scores for the item
-        if entail_scores:
-            item_result['ais_score'] = np.mean(entail_scores)
-        if precision_scores:
-            item_result['ais_precision'] = np.mean(precision_scores)
+            if joint_entail:
+                total_valid_citations += len(refs)
 
-        results.append(item_result)
+            total_citations += len(refs)
+
+        num_sentences = len(sents)
+        if num_sentences > 0:
+            recall = total_valid_citations / num_sentences
+        if total_citations > 0:
+            precision = total_valid_citations / total_citations
+
+        results.append({
+            'prompt': item['question'] + " " + item['output'],
+            'recall': recall,
+            'precision': precision
+        })
 
     return results
-
-
-
-
 
 
 
@@ -563,6 +663,7 @@ def compute_qampari_f1(data, cot=False):
     }
 
 def main():
+      
     parser = argparse.ArgumentParser()
     parser.add_argument("--f", type=str, required=True, help="Output file. Should have field `question`, `output`, (ROUGE) `answer`, \
                         (accuracy) `qa_pairs`, (AIS) `docs`")
@@ -573,60 +674,122 @@ def main():
     parser.add_argument("--at_most_citations", type=int, default=3, help="At most take this many documents (mostly for precision)")
     parser.add_argument("--claims_nli", action="store_true", help="Use claims for ELI5")
 
-    # QAMPARI
-    parser.add_argument("--cot", action="store_true", help="For QAMPARI, try to find colon and separate the COT and answer listing")
 
+    # Setup logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--f", type=str, required=True, help="Input/output file path.")
+    parser.add_argument("--no_rouge", action="store_true", help="Do not evaluate ROUGE score")
+    parser.add_argument("--qa", action="store_true", help="Use the QA model")
+    parser.add_argument("--mauve", action="store_true", help="Use the mauve score model")
+    parser.add_argument("--citations", action="store_true", help="Evaluate with citation model")
+    parser.add_argument("--at_most_citations", type=int, default=3, help="At most take this many documents (mostly for precision)")
+    parser.add_argument("--claims_nli", action="store_true", help="Use claims for ELI5")
     args = parser.parse_args()
 
-    with open(args.f) as f:
-        data_with_config = json.load(f)
-    data = data_with_config['data'] 
+    # Load data from the specified file
+    with open(args.f, 'r') as file:
+        data = json.load(file)['data']
 
-    if "qampari" in args.f:
-        args.no_rouge = True
-        args.qa = False
-        args.mauve = False
-        args.decontext = False
-        qampari = True
-    else:
-        qampari = False
-
-    # Truncate by newline and remove on the fly search result
-    logger.warning("We remove all the pre/appended space/newlines and we truncate the answer by the first newline.")
-    logger.warning("We replace any on the fly search result to standard bracket citation format.")
-    for i in range(len(data)):
-        data[i]['output'] = data[i]['output'].strip().split("\n")[0]
-        data[i]['output'] = data[i]['output'].replace("<|im_end|>", "")
+    # Normalize and clean up data entries
+    for item in tqdm(data, desc="Processing data"):
+        item['output'] = item['output'].strip().split("\n")[0].replace("", "")
 
 
-    # Normalize data
-    for i in tqdm(range(len(data)), desc="Normalizing data"):
-        data[i]['output'] = data[i]['output'].strip().split("\n")[0]
-
-    # Remove all citations for all non-AutoAIS evaluation
-    normalized_data = copy.deepcopy(data)
-    for i in range(len(normalized_data)):
-        normalized_data[i]['output'] = remove_citations(normalized_data[i]['output'])
-
-    result = {}
-    result['length'] = compute_len(normalized_data)
-    result['str_em'], result['str_hit'] = compute_str_em(normalized_data)
-    if qampari:
-        result.update(compute_qampari_f1(normalized_data, cot=args.cot))
     if not args.no_rouge:
-        result['rougeLsum'] = compute_rouge(normalized_data)
-    if args.qa:
-        result.update(compute_qa(normalized_data))
-    if args.mauve:
-        result['mauve'] = compute_mauve(normalized_data)
-    if args.citations:
-        result.update(compute_autoais(data, qampari=qampari, at_most_citations=args.at_most_citations))
-    if args.claims_nli:
-        result["claims_nli"] = compute_claims(normalized_data)
+        logger.info("Evaluating ROUGE scores...")
+        rouge_results = compute_individual_rouge(data)
+        logger.info(f"Average ROUGE score: {rouge_results['average_scores']}")
+        
+        # Incorporate individual ROUGE scores into the data
+        for idx, score in enumerate(rouge_results['individual_scores']):
+            data[idx]['rouge_score'] = score
 
-    print(result)
-    with open(args.f + ".score", "w") as f:
-        json.dump(result, f, indent=4)
+
+    if args.citations:
+        logger.info("Evaluating with AutoAIS...")
+        autoais_results = compute_autoais_individuals(data, qampari="qampari" in args.f, at_most_citations=args.at_most_citations)
+        for idx, result in enumerate(autoais_results):
+            data[idx].update(result)
+
+    import os
+
+    # Write the modified data back to the file or to a new file
+    base_filename, file_extension = os.path.splitext(args.f)
+    output_filename = base_filename + "_enhanced.json"
+    with open(output_filename, 'w') as outfile:
+        json.dump(data, outfile, indent=4)
+    logger.info(f"Results written to {output_filename}")
+    # args = parser.parse_args()
+
+    # if "qampari" in args.f:
+    #     args.no_rouge = True
+    #     args.qa = False
+    #     args.mauve = False
+    #     args.decontext = False
+    #     qampari = True
+    # else:
+    #     qampari = False
+
+
+
+    # # QAMPARI
+    # parser.add_argument("--cot", action="store_true", help="For QAMPARI, try to find colon and separate the COT and answer listing")
+
+    # args = parser.parse_args()
+
+    # with open(args.f) as f:
+    #     data_with_config = json.load(f)
+    # data = data_with_config['data'] 
+
+    # if "qampari" in args.f:
+    #     args.no_rouge = True
+    #     args.qa = False
+    #     args.mauve = False
+    #     args.decontext = False
+    #     qampari = True
+    # else:
+    #     qampari = False
+
+    # # Truncate by newline and remove on the fly search result
+    # logger.warning("We remove all the pre/appended space/newlines and we truncate the answer by the first newline.")
+    # logger.warning("We replace any on the fly search result to standard bracket citation format.")
+    # for i in range(len(data)):
+    #     data[i]['output'] = data[i]['output'].strip().split("\n")[0]
+    #     data[i]['output'] = data[i]['output'].replace("<|im_end|>", "")
+
+
+    # # Normalize data
+    # for i in tqdm(range(len(data)), desc="Normalizing data"):
+    #     data[i]['output'] = data[i]['output'].strip().split("\n")[0]
+
+    # # Remove all citations for all non-AutoAIS evaluation
+    # normalized_data = copy.deepcopy(data)
+    # for i in range(len(normalized_data)):
+    #     normalized_data[i]['output'] = remove_citations(normalized_data[i]['output'])
+
+    # result = {}
+    # result['length'] = compute_len(normalized_data)
+    # result['str_em'], result['str_hit'] = compute_str_em(normalized_data)
+    # if qampari:
+    #     result.update(compute_qampari_f1(normalized_data, cot=args.cot))
+    # if not args.no_rouge:
+    #     result['rougeLsum'] = compute_rouge(normalized_data)
+    # if args.qa:
+    #     result.update(compute_qa(normalized_data))
+    # if args.mauve:
+    #     result['mauve'] = compute_mauve(normalized_data)
+    # if args.citations:
+    #     result.update(compute_autoais_individuals(data, qampari=qampari, at_most_citations=args.at_most_citations))
+    # if args.claims_nli:
+    #     result["claims_nli"] = compute_claims(normalized_data)
+
+    # print(result)
+    # with open(args.f + ".score", "w") as f:
+    #     json.dump(result, f, indent=4)
 
 if __name__ == "__main__":
     main()

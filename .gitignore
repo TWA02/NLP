@@ -162,3 +162,12 @@ cython_debug/
 data/
 result
 *.tar
+
+
+
+# environment
+
+
+my_env/
+
+hub/

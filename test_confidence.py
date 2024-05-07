@@ -29,29 +29,37 @@ class AzureModelConfidenceTester:
                 openai.api_key = OPENAI_API_KEY
                 openai.organization = OPENAI_ORG_ID
 
-    def query_confidence(self, text, max_tokens=50):
-        prompt = f"Given the answers and citations in this text: \"{text}\". On a scale of 0 to 100, give a confidence score on the accuracy and relevance of these citations? Provide only a number and nothing else."
-        logger.info(f"Sending prompt to model: {prompt}")
+
+    def query_confidence(self, text, metric):
+        definitions = {
+            'relevance': "how relevant the citations are to the answers provided.",
+            'accuracy': "how accurate the citations are in representing their source materials.",
+            'correctness': "how correct the answers are in addressing the questions."
+        }
+        prompt = f"Given the text: \"{text}\" and considering {definitions[metric]}, on a scale of 0 to 100, provide a numerical score for {metric}."
+        logger.info(f"Sending prompt for {metric}: {prompt}")
 
         try:
             response = openai.ChatCompletion.create(
-                    engine="nlp",
-                    model="gpt-35-turbo",
-                    messages=[{'role': 'system', 'content': "You are a helpful assistant."},
-                            {'role': 'user', 'content': prompt}],
-                    temperature=0.5,
-                    max_tokens=max_tokens,
-                    top_p=1.0,
-                    stop=None
+                engine="nlp",
+                model="gpt-35-turbo",
+                messages=[{'role': 'system', 'content': "You are a numerical assistant and should only respond with a number."},
+                          {'role': 'user', 'content': prompt}],
+                temperature=0.5,
+                max_tokens=10,
+                top_p=1.0,
+                stop=None
             )
-            confidence_response = response['choices'][0]['message']['content']
-            logger.info(f"Received response: {confidence_response}")
-            return confidence_response
+            confidence_response = response['choices'][0]['message']['content'].strip()
+            score = float(confidence_response) if confidence_response.isdigit() else None
+            logger.info(f"Received numerical response for {metric}: {score}")
+            return score
         except Exception as e:
-            logger.error(f"Failed to query the model: {e}")
+            logger.error(f"Failed to query the model for {metric}: {e}")
             return None
 
-def process_data(data, output_file):
+
+def process_data(data, output_prefix):
     results = []
 
     for entry in data:
@@ -62,20 +70,16 @@ def process_data(data, output_file):
 
         args = Namespace(openai_api=True, azure=True, model='gpt-3.5-turbo-0301', text=combined_text)
         tester = AzureModelConfidenceTester(args)
-        confidence = tester.query_confidence(combined_text)
 
-        entry.update({
-            "confidence_score": float(confidence) if confidence and confidence.isdigit() else None,
-        })
+        metrics = {'relevance': None, 'accuracy': None, 'correctness': None}
+        for metric in metrics.keys():
+            metrics[metric] = tester.query_confidence(combined_text, metric)
+
+        entry.update(metrics)
         results.append(entry)
 
-    # Save the updated data with confidence and F1 scores to a new JSON file
-    with open(output_file, 'w') as f:
-        json.dump(data, f, indent=4)
-
-    # Prepare data for correlation analysis
-    df = pd.DataFrame.from_records(results, columns=['confidence_score'])
-    
+    with open(output_prefix + '.json', 'w') as f:
+        json.dump(results, f, indent=4)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Process JSON data and query model confidence on Azure.')
@@ -89,7 +93,4 @@ if __name__ == '__main__':
     else:
         with open(args.file, 'r') as file:
             data = json.load(file)
-            if "data" in data:
-                process_data(data['data'], args.output)
-            else:
-                logger.error("JSON does not contain 'data' key")
+            process_data(data, args.output)
